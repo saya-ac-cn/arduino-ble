@@ -1,3 +1,5 @@
+int led = 13;
+// 教程参见 https://blog.csdn.net/wanzew/article/details/80037813
 // Serial.print 发送的是字符，如果你发送97，发过去的其实是9的ascii码(00111001)和7的ascii码(00110111)。
 // Serial.write 发送的字节，是一个0-255的数字，如果你发97， 发过去的其实是97的二进制(01100001)，对应ascii表中的“a".
 
@@ -21,8 +23,8 @@
  * 
  * 电源(0x00):
  *  启动：0x01  关闭：0x00
- * 心跳(0x01)  fffffff
- *  回复：0x01 0xff 0xff
+ * 心跳(0x01) 
+ *  回复：0x01
  * 转向(0x02):
  *  左转：0x01  松开：0x00
  *  右转：0x02  松开：0x00
@@ -34,19 +36,18 @@
  *  前照灯：0x02
  *  停车灯：0x03
  */
-
 // 暂存接收指令的数组
 byte datas[2];
 // 前照灯
-const int headlight = 6;
+const int headlight = 8;
 // 停车灯&危险报警灯光
-const int parklight = 5; 
-// 定义驱动电机1控制引脚
-const int motorA_1 = 10;
-const int motorA_2 = 11;
-// 定义驱动电机2控制引脚
-const int motorB_1 = 12;
-const int motorB_2 = 13;
+const int parklight = 9; 
+// 定义转向电机控制引脚
+const int turn_1 = 10;
+const int turn_2 = 11;
+// 定义驱动电机控制引脚
+const int gear_1 = 12;
+const int gear_2 = 13;
 // 总电源开关
 boolean masterSwitch = false;
 // 总驱动电源开关
@@ -58,45 +59,32 @@ boolean connectStatus = false;
 // 上一次心跳发送时间
 long lastSendTime = 0;
 // 心跳数据
-const byte HEARTBEAT[2] = {0x01,0xFF};
-
-
-/**
- * 全部置位低电平，用于开机和停机
- */
-void initLevel(){
-  digitalWrite(headlight,LOW);
-  digitalWrite(parklight,LOW);
-  digitalWrite(motorA_1,LOW);
-  digitalWrite(motorA_2,LOW);
-  digitalWrite(motorB_1,LOW);
-  digitalWrite(motorB_2,LOW);  
-}
+const byte HEARTBEAT[3] = {0x01,0xFF,0xFF};
 
 void setup() {
-  // put your setup code here, to run once:
-  // 定义波特率，以便控制台打印
+  // 初始化波特率
   Serial.begin(9600);
   // 定义各引脚为输出模式
   pinMode(headlight,OUTPUT);
   pinMode(parklight,OUTPUT);
-  pinMode(motorA_1,OUTPUT);
-  pinMode(motorA_2,OUTPUT);
-  pinMode(motorB_1,OUTPUT);
-  pinMode(motorB_2,OUTPUT);
+  pinMode(turn_1,OUTPUT);
+  pinMode(turn_2,OUTPUT);
+  pinMode(gear_1,OUTPUT);
+  pinMode(gear_2,OUTPUT);
   // 启动时刻，全部置位低电平
-  initLevel();
-  lastSendTime = millis();
-  connectStatus = true;
-  motorSwitch = true;
+  digitalWrite(headlight,LOW);
+  digitalWrite(parklight,LOW);
+  digitalWrite(turn_1,LOW);
+  digitalWrite(turn_2,LOW);
+  digitalWrite(gear_1,LOW);
+  digitalWrite(gear_2,LOW);
 }
-
 
 void loop() {
   // 间隔60s发送一次心跳
-  if((millis() - lastSendTime) > 60000){
+  if((millis() - lastSendTime) > 60){
     // 发送心跳的指令  
-    Serial.write(HEARTBEAT,2);
+    Serial.write(HEARTBEAT,3);
     // 防止粘包，间隔一定的时间
     delay(100);
     // 重置连接状态，本轮心跳连接，等待控制端回复
@@ -105,31 +93,24 @@ void loop() {
     lastSendTime = millis();
   }
   // 心跳发送超过30s后，控制端无应答，主动断开
-  if (millis()-lastSendTime>30000 && false == connectStatus){
-    // 整车停机
-    //suspend();  
-    initLevel();  
+  if (millis()-lastSendTime>30 && false == connectStatus){
+    // 发送停止驱动信号
+    gearHandel(0);    
     // 停止驱动
     motorSwitch = false;
   }  
   //判断Serial串口是否有可读的数据
-  while(Serial.available()>0){
+  while(Serial.available()){
     // 注意：这里收到的数据是来自小程序16进制发送后的数据，接收后自动处理成10进制
     int status = Serial.readBytes(datas,2);
     // 如果接收到设备的发送指令长度为2，则进行相应的处理,其它情况，一律不处理
     if(2 == status){
-      Serial.print(datas[0]);
-      Serial.print(datas[1]);
-      dispatcher((int)datas[0],(int)datas[1]);
+      dispatcher(datas[0],datas[1]);
     }
   }
 }
 
-
-/**
- * 指令执行调度器
- * 入参：一级指令类别；二级指令详情
- */
+// 指令执行调度器
 void dispatcher(int type,int value){
   switch(type){
     case 0:
@@ -161,6 +142,7 @@ void dispatcher(int type,int value){
   }
 }
 
+
 /**
  * 处理总电气开关
  * 电源(0x00):
@@ -169,137 +151,9 @@ void dispatcher(int type,int value){
 void masterSwitchHandel(int value){
    if(0 == value){ 
       masterSwitch = false;
-      // 所有相关的引脚都置位低电平
-      initLevel();
    }else{
       masterSwitch = true;
    }
-}
-
-/**
- * 处理前进方向
- * 方向(0x03):
- *  前进：0x01  松开：0x00
- *  后退：0x02  松开：0x00
- */
-void gearHandel(int value){
-  // 驱动的前提是：总电气开关已经打开 且 总驱动电源开关
-  if(false == masterSwitch || false == motorSwitch){
-    return;
-  }
-  switch(value){
-    case 0:
-      // 停车
-      suspend();
-      break;
-    case 1:
-      // 前进
-      forward();
-      break;
-    case 2:
-      // 倒车
-      backward();
-      break;
-    default:
-      // 空转，什么指令都不执行
-      break;  
-  }
-}
-
-/**
- * 处理转向
- * 转向(0x02):
- *  左转：0x01  松开：0x00
- *  右转：0x02  松开：0x00
- */
-void turnHandel(int value){
-  // 转向的前提是：总电气开关已经打开 且 总驱动电源开关
-  if(false == masterSwitch || false == motorSwitch){
-    return;
-  }
-  switch(value){
-    case 0:
-      // 停车
-      suspend();
-      break;
-    case 1:
-      // 左转
-      turnLeft();
-      break;
-    case 2:
-      // 右转
-      turnRight();
-      break;
-    default:
-      // 空转，什么指令都不执行
-      break;  
-  }
-}
-
-/**
- * 前进
- */
-void forward(){
-  // 驱动电机在运行，停车灯处于低电平
-  digitalWrite(parklight,LOW);
-  digitalWrite(motorA_1,HIGH);
-  digitalWrite(motorA_2,LOW);
-  digitalWrite(motorB_1,HIGH);
-  digitalWrite(motorB_2,LOW);
-}
-
-/**
- * 后退
- */
-void backward(){
-   // 驱动电机在运行，停车灯处于低电平
-   digitalWrite(parklight,LOW);
-  // 假如当前状态不是后退
-  digitalWrite(motorA_1,LOW);
-  digitalWrite(motorA_2,HIGH);
-  digitalWrite(motorB_1,LOW);
-  digitalWrite(motorB_2,HIGH);
-}
-
-/**
- * 停车(松开前进&后退)
- */
-void suspend(){
-  // 车灯高电平
-  digitalWrite(parklight,HIGH);
-  // 假如当前状态不是停车
-  digitalWrite(motorA_1,LOW);
-  digitalWrite(motorA_2,LOW);
-  digitalWrite(motorB_1,LOW);
-  digitalWrite(motorB_2,LOW);
-}
-
-/**
- * 左转
- */
-void turnLeft(){
-   // 驱动电机在运行，停车灯处于低电平
-   digitalWrite(parklight,LOW);
-   // 左电机后退
-   digitalWrite(motorA_1,LOW);
-   digitalWrite(motorA_2,HIGH);
-   // 右电机前进
-   digitalWrite(motorB_1,HIGH);
-   digitalWrite(motorB_2,LOW);
-}
-
-/**
- * 右转
- */
-void turnRight(){
-   // 驱动电机在运行，停车灯处于低电平
-   digitalWrite(parklight,LOW);
-    // 左电机前进
-   digitalWrite(motorA_1,HIGH);
-   digitalWrite(motorA_2,LOW);
-   // 右电机后退
-   digitalWrite(motorB_1,LOW);
-   digitalWrite(motorB_2,HIGH);
 }
 
 /**
@@ -323,7 +177,6 @@ void lightHandel(int value){
       lightSwitch = true;
       break;
     case 2:
-      Serial.print(value);
       // 开启&关闭前照灯
       boolean headlightStatus = digitalRead(headlight);
       // 操作灯光的前提是：总电气开关已经打开 且 总照明开关已经打开
@@ -332,17 +185,80 @@ void lightHandel(int value){
       }
       break;
     case 3:
-      Serial.print(9);
       // 开启&关闭停车灯
       boolean parklightStatus = digitalRead(parklight);
-              Serial.print(parklightStatus);
       // 操作灯光的前提是：总电气开关已经打开 且 总照明开关已经打开
       if(masterSwitch && lightSwitch){
         digitalWrite(parklight,!parklightStatus);
       }
       break;
     default:
-      //Serial.print(value);
+      // 空转，什么指令都不执行
+      break;  
+  }
+}
+
+/**
+ * 处理转向
+ * 转向(0x02):
+ *  左转：0x01  松开：0x00
+ *  右转：0x02  松开：0x00
+ */
+void turnHandel(int value){
+  // 转向的前提是：总电气开关已经打开 且 总驱动电源开关
+  if(false == masterSwitch || false == motorSwitch){
+    return;
+  }
+  switch(value){
+    case 0:
+      // 停止转向
+      digitalWrite(turn_1,LOW);
+      digitalWrite(turn_2,LOW);
+      break;
+    case 1:
+      // 左转
+      digitalWrite(turn_1,HIGH);
+      digitalWrite(turn_2,LOW);
+      break;
+    case 2:
+      // 右转
+      digitalWrite(turn_1,LOW);
+      digitalWrite(turn_2,HIGH);
+      break;
+    default:
+      // 空转，什么指令都不执行
+      break;  
+  }
+}
+
+/**
+ * 处理转向
+ * 方向(0x03):
+ *  前进：0x01  松开：0x00
+ *  后退：0x02  松开：0x00
+ */
+void gearHandel(int value){
+  // 驱动的前提是：总电气开关已经打开 且 总驱动电源开关
+  if(false == masterSwitch || false == motorSwitch){
+    return;
+  }
+  switch(value){
+    case 0:
+      // 停车
+      digitalWrite(gear_1,LOW);
+      digitalWrite(gear_2,LOW);
+      break;
+    case 1:
+      // 前进
+      digitalWrite(gear_1,HIGH);
+      digitalWrite(gear_2,LOW);
+      break;
+    case 2:
+      // 倒车
+      digitalWrite(gear_1,LOW);
+      digitalWrite(gear_2,HIGH);
+      break;
+    default:
       // 空转，什么指令都不执行
       break;  
   }
