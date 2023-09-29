@@ -22,7 +22,7 @@
  * 电源(0x00):
  *  启动：0x01  关闭：0x00
  * 心跳(0x01)  fffffff
- *  回复：0x01 0xff 0xff
+ *  回复：0x01 0xff
  * 转向(0x02):
  *  左转：0x01  松开：0x00
  *  右转：0x02  松开：0x00
@@ -37,16 +37,18 @@
 
 // 暂存接收指令的数组
 byte datas[2];
+// 红外避障传感器引脚(前)
+// const int headMH = 7;
 // 前照灯
 const int headlight = 6;
-// 停车灯&危险报警灯光
+// 停车灯&危险报警灯光引脚
 const int parklight = 5; 
 // 定义驱动电机1控制引脚
-const int motorA_1 = 10;
-const int motorA_2 = 11;
+const int motorA_1 = 9;
+const int motorA_2 = 10;
 // 定义驱动电机2控制引脚
-const int motorB_1 = 12;
-const int motorB_2 = 13;
+const int motorB_1 = 11;
+const int motorB_2 = 12;
 // 总电源开关
 boolean masterSwitch = false;
 // 总驱动电源开关
@@ -70,11 +72,10 @@ void initLevel(){
   digitalWrite(motorA_1,LOW);
   digitalWrite(motorA_2,LOW);
   digitalWrite(motorB_1,LOW);
-  digitalWrite(motorB_2,LOW);  
+  digitalWrite(motorB_2,LOW);
 }
 
 void setup() {
-  // put your setup code here, to run once:
   // 定义波特率，以便控制台打印
   Serial.begin(9600);
   // 定义各引脚为输出模式
@@ -84,6 +85,7 @@ void setup() {
   pinMode(motorA_2,OUTPUT);
   pinMode(motorB_1,OUTPUT);
   pinMode(motorB_2,OUTPUT);
+  // pinMode(headMH,INPUT);
   // 启动时刻，全部置位低电平
   initLevel();
   lastSendTime = millis();
@@ -112,16 +114,26 @@ void loop() {
     // 停止驱动
     motorSwitch = false;
   }  
+  // if(digitalRead(headMH)){
+  //  digitalWrite(parklight,LOW);
+  // }else{
+    // 遇到障碍物时，返回一个低电平
+  //  digitalWrite(parklight,HIGH);
+  // }
+  
   //判断Serial串口是否有可读的数据
   while(Serial.available()>0){
     // 注意：这里收到的数据是来自小程序16进制发送后的数据，接收后自动处理成10进制
     int status = Serial.readBytes(datas,2);
     // 如果接收到设备的发送指令长度为2，则进行相应的处理,其它情况，一律不处理
-    if(2 == status){
-      Serial.print(datas[0]);
-      Serial.print(datas[1]);
-      dispatcher((int)datas[0],(int)datas[1]);
+    if(2 != status){
+      break;
     }
+    if(1 != (int)datas[0]){
+      // 收到信号后，及时给予反馈，心跳除外
+      Serial.write(datas,2);
+    }
+    dispatcher((int)datas[0],(int)datas[1]);
   }
 }
 
@@ -177,7 +189,7 @@ void masterSwitchHandel(int value){
 }
 
 /**
- * 处理前进方向
+ * 处理前进、后退、停车
  * 方向(0x03):
  *  前进：0x01  松开：0x00
  *  后退：0x02  松开：0x00
